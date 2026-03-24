@@ -35,7 +35,7 @@ Jeda is designed to be **100% Plug & Play** for single-tenant or internal team u
 
 **Pull from Docker Hub:**
 ```bash
-docker pull bagose/jeda:latest
+docker pull bagose/jeda-scheduler:latest
 ```
 
 **Running with Docker Compose:**
@@ -44,7 +44,7 @@ Create a `docker-compose.yml`:
 version: '3.8'
 services:
   jeda:
-    image: bagose/jeda:latest
+    image: bagose/jeda-scheduler:latest
     ports:
       - "3001:3001"
     volumes:

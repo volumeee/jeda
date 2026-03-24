@@ -1,6 +1,16 @@
 version: '3.8'
 
 services:
+  jeda:
+    image: bagose/jeda-scheduler:latest
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./.env:/app/.env
+    restart: unless-stopped
+    depends_on:
+      - redis
+
   redis:
     image: redis:7-alpine
     command: redis-server --appendonly yes
