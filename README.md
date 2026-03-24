@@ -1,13 +1,13 @@
 <p align="center">
   <div align="center">
     <h1 style="font-size: 3em;">⚡ Jeda</h1>
-    <p><b>Self-Hosted Message Broker & Task Scheduler</b></p>
+    <p><b>Self-Hosted Cloud Task Scheduler</b></p>
   </div>
 </p>
 
 > **The ultimate self-hosted alternative to Upstash QStash.**
 >
-> Jeda is a lightning-fast, zero-config message broker and task scheduler. Delegate delayed webhook executions and timezone-aware cron jobs via a simple REST API, backed purely by Redis.
+> Jeda is a lightning-fast, zero-config cloud task scheduler. Delegate delayed webhook executions and timezone-aware cron jobs via a simple REST API, backed purely by Redis.
 
 [![Go](https://img.shields.io/badge/Go-1.24+-00ADD8?logo=go&logoColor=white)](https://go.dev)
 [![Redis](https://img.shields.io/badge/Redis-7.0+-DC382D?logo=redis&logoColor=white)](https://redis.io)
@@ -65,21 +65,6 @@ docker-compose up -d
 ```
 The API & Dashboard will be automatically available at `http://localhost:3001`.
 
-### Local Development
-
-```bash
-# Clone and install dependencies
-git clone https://github.com/bagose/jeda.git
-cd jeda
-go mod download
-
-# Start Redis locally
-docker-compose up -d redis
-
-# Run the complete application (API + Worker wrapper)
-bash start.sh
-```
-
 ### Auto-Provisioning Keys
 
 You don't need to configure secrets manually. Upon the first startup, Jeda detects missing keys, **auto-generates** them, saves them to `.env`, and prints them to the terminal:
@@ -93,58 +78,84 @@ You don't need to configure secrets manually. Upon the first startup, Jeda detec
 
 ## 📖 API Reference
 
-### 1. `POST /v1/tasks` — Submit a Task
+Every endpoint requires the header: `Authorization: Bearer <JEDA_API_KEY>`.
 
+### 1. `POST /v1/tasks` — Submit a Task
 Schedule a delayed webhook or an immediate execution.
 
-#### Request Body
+**Request Body:**
 | Field | Type | Description |
 |---|---|---|
 | `destination` | `string` | The target URL to hit. |
 | `body` | `object` | The JSON payload to send to the destination. |
 | `delay` | `string` | (Optional) Time to delay execution. e.g. `30s`, `2h`, `7d`. |
 | `cron` | `string` | (Optional) Cron expression. Upgrades task to a periodic schedule. |
-| `timezone` | `string` | (Optional) Executed based on local time. e.g. `Asia/Jakarta`. |
-| `retries` | `integer`| (Optional) Override default max retries (default: 3). |
+| `timezone` | `string` | (Optional) Cron timezone execution. e.g. `Asia/Jakarta`. |
+| `env` | `string` | (Optional) Separates traffic (e.g., `production`, `staging`). |
+| `retries` | `integer`| (Optional) Override default max retries. |
 
-#### Advanced Headers
-Jeda mirrors QStash's advanced header manipulation:
-
+**Advanced Headers:**
 | Header | Purpose |
 |---|---|
-| `Jeda-Forward-[Key]` | Strips the prefix and forwards the header. Example: `Jeda-Forward-Authorization: Bearer token` becomes `Authorization: Bearer token` at the destination. |
+| `Jeda-Forward-[Key]` | Strips the prefix and forwards the header. Example: `Jeda-Forward-Authorization: Bearer token`. |
 | `Jeda-Deduplication-Id` | Prevents double executions. Exact IDs are deduplicated strictly. |
-| `Jeda-Failure-Callback` | Provide a webhook URL. If the task fails permanently, Jeda notifies this callback. |
-| `Jeda-Queue-Group` | Enforces **Strict FIFO Queues**. Tasks with the same group ID execute sequentially. |
-| `Jeda-Env` | Routes tasks to `staging`, `production`, etc. Keeps the dashboard logically separated! |
+| `Jeda-Failure-Callback` | URL notified if the task permanently fails exhaust retries. |
+| `Jeda-Queue-Group` | Enforces **Strict FIFO Queues**. Tasks with same group ID execute sequentially. |
 
-#### Examples
+---
 
-**Delayed Task (Fire-and-forget in 2 days)**
-```bash
-curl -X POST http://localhost:3001/v1/tasks \
-  -H "Authorization: Bearer jd_api_xxxxx" \
-  -H "Content-Type: application/json" \
-  -H "Jeda-Forward-X-My-Header: CustomValue" \
-  -d '{
-    "destination": "https://api.example.com/invoice/process",
-    "body": { "invoice_id": "INV-123" },
-    "delay": "48h"
-  }'
+### 2. `GET /v1/tasks` — List Active Tasks
+Retrieve a list of tasks currently scheduled or pending.
+
+**Query Parameters:**
+- `?queue=` (Optional) Filter by queue type (`default`, `scheduler`, `fifo-*`). Default is `all`.
+- `?env=` (Optional) Filter by environment metadata.
+
+---
+
+### 3. `POST /v1/tasks/{id}/update` — Modifying Tasks
+Modify an existing queued task or cron schedule.
+
+**Query Parameters:**
+- `?queue=` (Required) Specify which queue the task belongs to (e.g. `?queue=scheduler` for cron tasks or `?queue=default` for webhook tasks).
+
+**Request Body:**
+Pass any fields you wish to update (`destination`, `body`, `cron`, `delay`, `env`).
+
+---
+
+### 4. `POST /v1/tasks/{id}/force` — Fire Now
+Force a queued task or a cron schedule to execute immediately, bypassing the timer. If it's a one-off delayed task, it will be executed and removed from the queue immediately.
+
+**Query Parameters:**
+- `?queue=` (Required) e.g., `?queue=scheduler` or `?queue=default`.
+
+---
+
+### 5. `DELETE /v1/tasks/{id}` — Delete a Task
+Permamently remove a task/cron schedule from the queue so it no longer triggers.
+
+**Query Parameters:**
+- `?queue=` (Required) Specifying the queue is necessary for Asynq deletion.
+
+---
+
+### 6. `POST /v1/test-webhook` — Ping Test
+Perform an immediate, synchronous HTTP outbound request sent by Jeda to verify URL connectivity without queueing it.
+
+**Request Body:**
+```json
+{
+  "destination": "https://api.example.com",
+  "body": { "hello": "world" }
+}
 ```
 
-**Timezone-Aware Cron Task**
-```bash
-curl -X POST http://localhost:3001/v1/tasks \
-  -H "Authorization: Bearer jd_api_xxxxx" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "destination": "https://api.example.com/daily-report",
-    "cron": "0 8 * * *",
-    "timezone": "Asia/Jakarta",
-    "body": { "event": "generate_report" }
-  }'
-```
+---
+
+### 7. Queue Management
+- `POST /v1/queue/pause` : Suspends all worker activity. No webhooks will be fired. Tasks will safely backlog.
+- `POST /v1/queue/resume` : Resumes processing of backlogged tasks.
 
 ---
 
