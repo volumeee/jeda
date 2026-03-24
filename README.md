@@ -1,13 +1,13 @@
 <p align="center">
   <div align="center">
     <h1 style="font-size: 3em;">⚡ Jeda</h1>
-    <p><b>Self-Hosted Cloud Task Scheduler</b></p>
+    <p><b>Self-Hosted Cloud Task Scheduler & Cron Jobs</b></p>
   </div>
 </p>
 
 > **The ultimate self-hosted alternative to Upstash QStash.**
 >
-> Jeda is a lightning-fast, zero-config cloud task scheduler. Delegate delayed webhook executions and timezone-aware cron jobs via a simple REST API, backed purely by Redis.
+> Jeda is a lightning-fast, zero-config cloud task scheduler and cron jobs dispatcher. Delegate delayed webhook executions and timezone-aware cron jobs via a simple REST API, backed purely by Redis.
 
 [![Go](https://img.shields.io/badge/Go-1.24+-00ADD8?logo=go&logoColor=white)](https://go.dev)
 [![Redis](https://img.shields.io/badge/Redis-7.0+-DC382D?logo=redis&logoColor=white)](https://redis.io)
