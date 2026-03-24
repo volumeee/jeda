@@ -1,0 +1,14 @@
+.git
+.github
+.gitignore
+.dockerignore
+.env
+.DS_Store
+README.md
+TECHNICAL.md
+test_e2e.sh
+tests/
+start.sh
+bin/
+docker-compose.yml
+.vscode/

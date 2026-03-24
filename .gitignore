@@ -1,0 +1,38 @@
+# Binaries
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Vendor & Dependencies
+vendor/
+
+# Environment Variables
+.env
+.env.*
+
+# Data & Docker Compose 
+redisdata/
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Internal docs & tests
+TECHNICAL.md
+test_e2e.sh
+tests/

@@ -1,0 +1,1159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Jeda — Self-Hosted Scheduler</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/cronstrue@2/dist/cronstrue.min.js"></script>
+  <style>
+    *, body { font-family: 'Inter', sans-serif; }
+    .mono { font-family: 'JetBrains Mono', monospace !important; }
+    .slide-in  { animation: slideIn  0.22s cubic-bezier(0.4,0,0.2,1); }
+    .modal-in  { animation: modalIn  0.18s ease; }
+    .fade-in   { animation: fadeIn   0.15s ease; }
+    .log-flash { animation: logFlash 0.5s ease; }
+    @keyframes slideIn  { from { transform: translateX(100%); opacity:0; } to { transform: translateX(0); opacity:1; } }
+    @keyframes modalIn  { from { opacity:0; transform:scale(.96) translateY(6px); } to { opacity:1; transform:scale(1) translateY(0); } }
+    @keyframes fadeIn   { from { opacity:0; transform:translateY(3px); } to { opacity:1; transform:translateY(0); } }
+    @keyframes logFlash { from { background:#1e3a5f40; } to { background:transparent; } }
+    ::-webkit-scrollbar { width:4px; height:4px; }
+    ::-webkit-scrollbar-track { background:transparent; }
+    ::-webkit-scrollbar-thumb { background:#374151; border-radius:2px; }
+    .env-prod  { background:#14532d22; color:#4ade80; border-color:#16a34a44; }
+    .env-stag  { background:#78350f22; color:#fb923c; border-color:#c2410c44; }
+    .label { display:block; font-size:.75rem; color:#6b7280; margin-bottom:.375rem; font-weight:500; }
+    .field { width:100%; background:#1f2937; border:1px solid #374151; color:#fff; border-radius:.5rem; padding:.5rem .75rem; font-size:.875rem; transition:border-color .15s; }
+    .field:focus { outline:none; border-color:#6366f1; }
+    .th { padding:.625rem 1.25rem; text-align:left; font-size:.7rem; color:#6b7280; font-weight:600; text-transform:uppercase; letter-spacing:.06em; }
+    .td { padding:.8rem 1.25rem; }
+    .detail-label { font-size:.7rem; color:#6b7280; text-transform:uppercase; letter-spacing:.06em; font-weight:600; margin-bottom:.375rem; }
+    .copy-btn { font-size:.7rem; color:#6b7280; background:#374151; border:1px solid #4b5563; border-radius:.375rem; padding:.2rem .5rem; cursor:pointer; white-space:nowrap; transition:all .15s; flex-shrink:0; }
+    .copy-btn:hover { background:#4b5563; color:#d1d5db; }
+    /* JSON syntax highlight */
+    .hl-key    { color:#7dd3fc; }
+    .hl-str    { color:#86efac; }
+    .hl-num    { color:#fb923c; }
+    .hl-bool   { color:#c084fc; }
+    .hl-null   { color:#f87171; }
+    .hl-wrap   { font-family:'JetBrains Mono',monospace; font-size:.72rem; line-height:1.6; white-space:pre; }
+    /* Custom Confirm Popover */
+    .confirm-overlay {
+      position: fixed; inset: 0; z-index: 9000;
+      background: rgba(0,0,0,0.6); backdrop-filter: blur(4px);
+      display: flex; align-items: center; justify-content: center;
+      animation: fadeIn .15s ease;
+    }
+    .confirm-box {
+      background: #111827; border: 1px solid #374151; border-radius: 1rem;
+      padding: 1.5rem; min-width: 22rem; max-width: 90vw;
+      box-shadow: 0 25px 50px -12px rgba(0,0,0,.6);
+      animation: modalIn .18s ease;
+    }
+  </style>
+</head>
+<body class="bg-gray-950 text-gray-200 min-h-screen">
+<div id="app">
+
+  <!-- AUTH -->
+  <div v-if="!authed" class="min-h-screen flex items-center justify-center">
+    <div class="w-full max-w-sm px-6">
+      <div class="text-center mb-8">
+        <div class="text-4xl mb-3">⚡</div>
+        <h1 class="text-xl font-semibold text-white">Jeda</h1>
+        <p class="text-gray-500 text-sm mt-1">Self-Hosted Webhook Scheduler</p>
+      </div>
+      <div class="space-y-3">
+        <input v-model="apiKeyInput" @keyup.enter="login" type="password"
+          class="field mono" placeholder="jd_api_xxxxxxxxxxxxx" autofocus/>
+        <button @click="login" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-medium py-3 rounded-lg text-sm transition-colors">
+          Access Dashboard
+        </button>
+        <p v-if="loginError" class="text-red-400 text-xs text-center">{{ loginError }}</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- APP -->
+  <div v-else class="flex h-screen overflow-hidden">
+
+    <!-- Sidebar -->
+    <aside class="w-52 bg-gray-900 border-r border-gray-800 flex flex-col shrink-0">
+      <div class="px-4 py-4 border-b border-gray-800 flex items-center gap-2">
+        <span>⚡</span>
+        <span class="font-semibold text-white text-sm">Jeda</span>
+        <span class="ml-auto text-[10px] text-gray-600 mono">v1.0</span>
+      </div>
+
+      <!-- Env Switcher -->
+      <div class="px-3 py-3 border-b border-gray-800">
+        <p class="text-[10px] text-gray-600 uppercase tracking-wider font-semibold mb-2 px-1">Environment</p>
+        <div class="flex gap-1 p-1 bg-gray-800/80 rounded-lg">
+          <button @click="setEnv('production')"
+            :class="['flex-1 text-xs py-1.5 rounded-md font-semibold transition-all',
+              env==='production' ? 'bg-emerald-700 text-white shadow-sm' : 'text-gray-400 hover:text-gray-200']">
+            Production
+          </button>
+          <button @click="setEnv('staging')"
+            :class="['flex-1 text-xs py-1.5 rounded-md font-semibold transition-all',
+              env==='staging' ? 'bg-orange-700 text-white shadow-sm' : 'text-gray-400 hover:text-gray-200']">
+            Staging
+          </button>
+        </div>
+      </div>
+
+      <nav class="flex-1 p-2 space-y-0.5">
+        <button v-for="item in navItems" :key="item.id" @click="tab=item.id"
+          :class="['w-full text-left px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-2.5',
+            tab===item.id ? 'bg-gray-800 text-white font-medium' : 'text-gray-500 hover:text-gray-300 hover:bg-gray-800/40']">
+          <span class="text-base">{{ item.icon }}</span>
+          <span>{{ item.label }}</span>
+          <span v-if="item.id==='tasks' && envStats.pending>0"
+            class="ml-auto bg-indigo-600 text-white text-[10px] font-bold rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1">
+            {{ envStats.pending }}
+          </span>
+          <span v-if="item.id==='logs' && sseConnected" class="ml-auto w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+        </button>
+      </nav>
+
+      <div class="p-3 border-t border-gray-800 space-y-1.5">
+        <button @click="confirmPause"
+          class="w-full bg-red-950/50 hover:bg-red-950 border border-red-900/40 text-red-400 hover:text-red-300 text-xs font-medium py-2 rounded-lg transition-colors">
+          Pause All Queues
+        </button>
+        <button @click="resumeQueue"
+          class="w-full bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-gray-200 text-xs font-medium py-2 rounded-lg transition-colors">
+          Resume All Queues
+        </button>
+        <button @click="logout" class="w-full text-gray-600 hover:text-gray-400 text-xs py-1.5 text-center transition-colors">
+          Sign Out
+        </button>
+      </div>
+    </aside>
+
+    <!-- Main -->
+    <div class="flex-1 flex flex-col overflow-hidden">
+
+      <!-- Topbar -->
+      <header class="bg-gray-900 border-b border-gray-800 px-6 py-3 flex items-center gap-4 shrink-0">
+        <span class="text-sm font-medium text-white">{{ currentNavLabel }}</span>
+        <span :class="['text-[10px] px-2 py-0.5 rounded-full border font-semibold mono', env==='production' ? 'env-prod' : 'env-stag']">
+          {{ env }}
+        </span>
+        <div class="flex gap-5 text-xs mono ml-auto">
+          <span class="text-gray-500">Pending <span class="text-indigo-400 font-bold">{{ envStats.pending }}</span></span>
+          <span class="text-gray-500">Active <span class="text-yellow-400 font-bold">{{ envStats.active }}</span></span>
+          <span class="text-gray-500">Done <span class="text-emerald-400 font-bold">{{ envStats.success }}</span></span>
+          <span v-if="envStats.failed>0" class="text-gray-500">DLQ <span class="text-red-400 font-bold">{{ envStats.failed }}</span></span>
+        </div>
+        <button @click="loadData" class="text-xs text-gray-500 hover:text-gray-300 bg-gray-800 hover:bg-gray-700 px-3 py-1.5 rounded-md transition-colors ml-2">
+          Refresh
+        </button>
+      </header>
+
+      <!-- Content -->
+      <main class="flex-1 overflow-y-auto p-5">
+
+        <!-- ─── TASKS & SCHEDULES ─── -->
+        <div v-if="tab==='tasks'" class="space-y-4 fade-in">
+
+          <!-- Stats row -->
+          <div class="grid grid-cols-4 gap-3">
+            <div v-for="c in statCards" :key="c.key"
+              class="bg-gray-900 border border-gray-800 rounded-xl p-4 flex items-center gap-4">
+              <div>
+                <p class="text-[10px] text-gray-500 uppercase tracking-wider font-semibold">{{ c.label }}</p>
+                <p :class="['text-2xl font-bold mono mt-0.5', c.color]">{{ envStats[c.key] ?? 0 }}</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Toolbar -->
+          <div class="flex gap-2 items-center">
+            <button @click="showForm=!showForm"
+              :class="['text-sm px-4 py-2 rounded-lg font-medium border transition-colors flex items-center gap-1.5',
+                showForm ? 'bg-indigo-600 border-indigo-600 text-white' : 'bg-gray-900 border-gray-800 text-gray-300 hover:border-gray-600']">
+              <span>{{ showForm ? '−' : '+' }}</span> Add Task / Cron
+            </button>
+            <div class="relative ml-auto">
+              <input v-model="search" type="text" placeholder="Search ID or destination..."
+                class="field pl-3 w-72 text-xs py-2"/>
+            </div>
+            <select v-model="taskFilter" class="field w-auto text-sm">
+              <option value="all">All Types</option>
+              <option value="webhook:publish">Webhook</option>
+            </select>
+          </div>
+
+          <!-- Add Form -->
+          <div v-if="showForm" class="bg-gray-900 border border-gray-700 rounded-xl overflow-hidden fade-in">
+            <div class="flex gap-0 border-b border-gray-800">
+              <button @click="addMode='webhook'"
+                :class="['px-5 py-3 text-sm font-medium border-b-2 transition-colors',
+                  addMode==='webhook' ? 'border-indigo-500 text-indigo-400 bg-indigo-950/20' : 'border-transparent text-gray-500 hover:text-gray-300']">
+                Webhook Task
+              </button>
+              <button @click="addMode='cron'"
+                :class="['px-5 py-3 text-sm font-medium border-b-2 transition-colors',
+                  addMode==='cron' ? 'border-indigo-500 text-indigo-400 bg-indigo-950/20' : 'border-transparent text-gray-500 hover:text-gray-300']">
+                Cron Schedule
+              </button>
+            </div>
+            <div class="p-5">
+              <div class="grid grid-cols-2 gap-3">
+                <div class="col-span-2">
+                  <label class="label">Destination URL *</label>
+                  <input v-model="form.destination" type="url" class="field" placeholder="https://api.example.com/webhook"/>
+                </div>
+                <template v-if="addMode==='webhook'">
+                  <div>
+                    <label class="label">Delay <span class="text-gray-600 font-normal">(10s / 5m / 2h / 7d)</span></label>
+                    <input v-model="form.delay" class="field mono text-sm" placeholder="0 = immediate"/>
+                    <p v-if="form.delay" class="text-[10px] text-indigo-400 mt-1 pl-1 truncate">{{ addDelayPreview }}</p>
+                  </div>
+                  <div>
+                    <label class="label">Max Retries</label>
+                    <input v-model.number="form.retries" type="number" min="0" max="10" class="field"/>
+                  </div>
+                  <div>
+                    <label class="label">Deduplication ID <span class="text-gray-600 font-normal">(optional)</span></label>
+                    <input v-model="form.dedupId" class="field mono text-sm" placeholder="my-unique-id"/>
+                  </div>
+                  <div>
+                    <label class="label">FIFO Queue Group <span class="text-gray-600 font-normal">(optional)</span></label>
+                    <input v-model="form.queueGroup" class="field mono text-sm" placeholder="order_user_123"/>
+                  </div>
+                  <div class="col-span-2">
+                    <label class="label">Failure Callback URL <span class="text-gray-600 font-normal">(optional)</span></label>
+                    <input v-model="form.failureCallback" type="url" class="field" placeholder="https://api.example.com/failed"/>
+                  </div>
+                </template>
+                <template v-if="addMode==='cron'">
+                  <div>
+                    <label class="label">Cron Expression *</label>
+                    <input v-model="form.cron" @blur="form.cron = autoFormatCron(form.cron)" class="field mono text-sm" placeholder="0 8 * * *"/>
+                    <p v-if="form.cron" class="text-[10px] text-purple-400 mt-1 pl-1 truncate">{{ addCronPreview }}</p>
+                  </div>
+                </template>
+                <div>
+                  <label class="label">Timezone</label>
+                  <input v-model="form.timezone" class="field mono text-sm" placeholder="Asia/Jakarta"/>
+                </div>
+                <div></div>
+                <div class="col-span-2">
+                  <label class="label">Payload JSON</label>
+                  <textarea v-model="form.body" rows="3" class="field mono text-xs"></textarea>
+                </div>
+              </div>
+              <div class="flex items-center gap-3 mt-4">
+                <button @click="submitForm" :disabled="formLoading"
+                  class="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-sm font-medium px-5 py-2 rounded-lg transition-colors">
+                  {{ formLoading ? 'Submitting...' : (addMode==='cron' ? 'Schedule Cron' : 'Add to Queue') }}
+                </button>
+                <button @click="showForm=false" class="text-sm text-gray-500 hover:text-gray-300 px-3 py-2 transition-colors">Cancel</button>
+                <p v-if="formResult" :class="['text-xs mono', formResult.error ? 'text-red-400' : 'text-emerald-400']">
+                  {{ formResult.error || 'OK — ' + (formResult.messageId || formResult.scheduleId || 'submitted') }}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Tasks Table -->
+          <div class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+            <div class="px-5 py-2.5 border-b border-gray-800 flex items-center gap-2 text-xs text-gray-500">
+              <span>{{ filteredTasks.length }} task(s) in <span :class="env==='production' ? 'text-emerald-400' : 'text-orange-400'">{{ env }}</span></span>
+              <span class="ml-auto text-gray-600 text-[10px]">Completed tasks auto-archive for 24h then are deleted</span>
+            </div>
+            <table class="w-full text-sm">
+              <thead>
+                <tr class="border-b border-gray-800">
+                  <th class="th">ID</th>
+                  <th class="th">Destination</th>
+                  <th class="th">Payload</th>
+                  <th class="th">State</th>
+                  <th class="th">Queue</th>
+                  <th class="th text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="task in filteredTasks" :key="task.id" @click="openDetail(task)"
+                  class="border-b border-gray-800/50 hover:bg-gray-800/20 transition-colors cursor-pointer">
+                  <td class="td mono text-xs text-gray-400">
+                    <span class="block w-44 truncate" :title="task.id">{{ task.id }}</span>
+                  </td>
+                  <td class="td text-xs text-gray-200">
+                    <span class="block w-48 truncate" :title="task.destination">{{ task.destination || '—' }}</span>
+                  </td>
+                  <td class="td w-48 py-2">
+                    <div class="max-h-16 overflow-y-auto bg-gray-950 rounded p-1.5 border border-gray-800 text-[9px] mono text-gray-400">
+                      <pre class="whitespace-pre-wrap leading-tight">{{ fmtJSON(task.body) }}</pre>
+                    </div>
+                  </td>
+                  <td class="td">
+                    <span :class="['text-[10px] font-semibold px-2 py-0.5 rounded-md border',
+                      task.state==='scheduled' ? 'bg-blue-950 text-blue-400 border-blue-900/40' :
+                      task.state==='periodic'  ? 'bg-purple-950 text-purple-400 border-purple-900/40' :
+                      task.state==='active'    ? 'bg-yellow-950 text-yellow-400 border-yellow-900/40' :
+                      task.state==='success'   ? 'bg-emerald-950 text-emerald-400 border-emerald-900/40' :
+                      task.state==='failed'    ? 'bg-red-950 text-red-400 border-red-900/40' :
+                                                 'bg-gray-800 text-gray-400 border-gray-700']">
+                      {{ task.state }}
+                    </span>
+                  </td>
+                  <td class="td text-[11px] font-mono">
+                    <span v-if="task.queue === 'scheduler'" class="text-purple-400 bg-purple-950/30 px-1.5 py-0.5 rounded">scheduler</span>
+                    <span v-else-if="task.queue_group" class="text-indigo-400 bg-indigo-950/30 px-1.5 py-0.5 rounded border border-indigo-900/50">fifo:{{task.queue_group}}</span>
+                    <span v-else class="text-gray-400">{{ task.queue }}</span>
+                  </td>
+                  <td class="td text-right" @click.stop>
+                    <div class="flex gap-1.5 justify-end">
+                      <button @click.stop="forceRun(task)"
+                        class="text-[11px] bg-amber-950/50 hover:bg-amber-950 border border-amber-900/40 text-amber-400 px-2.5 py-1.5 rounded-md transition-colors font-semibold">
+                        &#9654; Fire Now
+                      </button>
+                      <button @click.stop="deleteTask(task.id, task.queue)"
+                        class="text-[11px] bg-red-950/30 hover:bg-red-950/70 border border-red-900/30 text-red-400 px-2.5 py-1.5 rounded-md transition-colors font-semibold">
+                        Delete
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+                <tr v-if="!filteredTasks.length">
+                  <td colspan="5" class="py-16 text-center text-gray-600 text-sm italic">
+                    {{ !tasks.length ? 'Queue is empty.' : search ? 'No results for "' + search + '".' : 'No tasks in "' + env + '" environment.' }}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- ─── FIRE TEST ─── -->
+        <div v-if="tab==='test'" class="max-w-xl space-y-4 fade-in">
+          <div class="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-4">
+            <div>
+              <label class="label">Destination URL</label>
+              <input v-model="testForm.destination" type="url" class="field"/>
+            </div>
+            <div>
+              <label class="label">Payload JSON</label>
+              <textarea v-model="testForm.body" rows="5" class="field mono text-xs"></textarea>
+            </div>
+            <button @click="fireTest" :disabled="testing"
+              class="w-full bg-orange-600 hover:bg-orange-500 disabled:opacity-50 text-white font-semibold py-2.5 rounded-lg text-sm transition-colors">
+              {{ testing ? 'Firing...' : '&#x26A1; Fire Test Now' }}
+            </button>
+          </div>
+          <div v-if="testResult" class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden fade-in">
+            <!-- Status bar -->
+            <div class="px-5 py-3 border-b border-gray-800 flex gap-4 items-center">
+              <span :class="['text-sm font-bold mono', testResult.http_status>=200&&testResult.http_status<300 ? 'text-emerald-400' : 'text-red-400']">
+                {{ testResult.http_status || (testResult.error ? 'ERR' : '?') }}
+              </span>
+              <span class="text-xs text-gray-500 mono">{{ testResult.latency_ms }}ms</span>
+              <span class="text-xs text-gray-400 flex-1 truncate">→ {{ testForm.destination }}</span>
+              <span v-if="testResult.error" class="text-red-400 text-xs">{{ testResult.error }}</span>
+              <button @click="copyText(fmtJSON(testResult.body))" class="copy-btn">⎘ Copy</button>
+            </div>
+            <!-- Response body with syntax highlight -->
+            <div v-if="!testResult.error" class="p-4">
+              <p class="detail-label mb-2">Response Body</p>
+              <div class="bg-gray-800 rounded-lg p-3 overflow-auto max-h-96" v-html="syntaxHL(testResult.body)"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ─── LIVE LOGS (GCP-style expandable) ─── -->
+        <div v-if="tab==='logs'" class="fade-in">
+          <div class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+            <div class="px-5 py-3 border-b border-gray-800 flex items-center gap-3">
+              <span class="text-sm font-medium">Live Logs</span>
+              <span :class="['flex items-center gap-1.5 text-xs', sseConnected ? 'text-emerald-500' : 'text-red-400']">
+                <span :class="['w-1.5 h-1.5 rounded-full', sseConnected ? 'bg-emerald-500 animate-pulse' : 'bg-red-500']"></span>
+                {{ sseConnected ? 'SSE Connected' : 'Disconnected' }}
+              </span>
+              <span class="ml-auto text-[10px] text-gray-600 mono">{{ logs.length }} entries</span>
+              <button @click="logs=[]" class="text-xs text-gray-500 hover:text-gray-300 transition-colors">Clear</button>
+            </div>
+            <div ref="logPanel" class="overflow-y-auto" style="height:calc(100vh - 10rem)">
+              <!-- Each log row is GCP-style expandable -->
+              <div v-for="(log,i) in logs" :key="i"
+                :class="['border-b border-gray-800/40 transition-colors', log._expanded ? 'bg-gray-800/30' : 'hover:bg-gray-800/20']">
+                <!-- Summary row -->
+                <div @click="toggleLog(log)"
+                  class="flex gap-3 items-center px-3 py-1.5 cursor-pointer select-none">
+                  <span class="text-gray-600 mono text-[11px] shrink-0 w-14">{{ fmtTime(log.time) }}</span>
+                  <span :class="['shrink-0 mono text-[11px] font-bold w-8', logColor(log.level)]">{{ log.level?.substring(0,4) }}</span>
+                  <span class="text-gray-200 text-[12px] flex-1 truncate">{{ log.msg }}</span>
+                  <!-- Quick previews -->
+                  <span v-if="log.destination" class="text-indigo-400 text-[11px] mono truncate max-w-[12rem] shrink-0">{{ log.destination }}</span>
+                  <span v-if="log.status" :class="[+log.status<400?'text-emerald-400':'text-red-400','text-[11px] mono font-bold shrink-0']">{{ log.status }}</span>
+                  <span v-if="log.latency_ms" class="text-gray-500 text-[11px] mono shrink-0">{{ log.latency_ms }}ms</span>
+                  <span v-if="log.err" class="text-red-400 text-[11px] truncate max-w-xs">{{ log.err }}</span>
+                  <!-- Expand chevron -->
+                  <span :class="['text-gray-600 text-xs shrink-0 ml-1 transition-transform', log._expanded?'rotate-90':'']">&rsaquo;</span>
+                </div>
+                <!-- Expanded detail panel -->
+                <div v-if="log._expanded" class="px-3 pb-3 pt-0 fade-in">
+                  <div class="bg-gray-900 rounded-lg border border-gray-700 overflow-hidden">
+                    <div class="px-3 py-2 border-b border-gray-700 flex justify-between items-center">
+                      <span class="text-[10px] text-gray-500 uppercase tracking-wider font-semibold">Log Detail</span>
+                      <button @click.stop="copyText(fmtJSON(logFields(log)))" class="copy-btn">⎘ Copy JSON</button>
+                    </div>
+                    <div class="p-3" v-html="syntaxHL(logFields(log))"></div>
+                  </div>
+                </div>
+              </div>
+              <p v-if="!logs.length" class="text-gray-600 italic text-center py-16 text-sm">No logs yet. Start publishing tasks.</p>
+            </div>
+          </div>
+        </div>
+
+      </main>
+    </div>
+
+    <!-- ─── Detail Drawer ─── -->
+    <transition name="fade">
+      <div v-if="selectedTask" class="fixed inset-0 z-40 flex justify-end bg-black/50 backdrop-blur-sm" @click.self="closeDrawer">
+        <div class="w-full max-w-md bg-gray-900 border-l border-gray-800 h-full flex flex-col slide-in shadow-2xl">
+
+          <!-- Header -->
+          <div class="px-5 py-4 border-b border-gray-800 flex items-center justify-between shrink-0">
+            <div class="flex items-center gap-2">
+              <span class="text-sm font-semibold text-white">Task Detail</span>
+              <span :class="['text-[10px] font-bold px-2 py-0.5 rounded-full border',
+                selectedTask.env==='staging' ? 'env-stag' : 'env-prod']">
+                {{ selectedTask.env || 'production' }}
+              </span>
+              <span :class="['text-[10px] font-semibold px-2 py-0.5 rounded-md border',
+                selectedTask.state==='scheduled' ? 'bg-blue-950 text-blue-400 border-blue-900/40' : 
+                selectedTask.state==='periodic'  ? 'bg-emerald-950 text-emerald-400 border-emerald-900/40' :
+                'bg-gray-800 text-gray-400 border-gray-700']">
+                {{ selectedTask.state }}
+              </span>
+              <span v-if="selectedTask.next_process_at" class="text-[10px] text-blue-400/80 font-mono">
+                Next: {{ fmtTime(selectedTask.next_process_at) }}
+              </span>
+            </div>
+            <button @click="closeDrawer" class="text-gray-500 hover:text-gray-300 text-xl w-7 h-7 flex items-center justify-center rounded-md hover:bg-gray-800 transition-colors">&times;</button>
+          </div>
+
+          <!-- Scrollable body -->
+          <div class="flex-1 overflow-y-auto">
+            <!-- Task Info (View Mode) -->
+            <div v-if="!isEditing" class="p-5 space-y-4">
+              <div>
+                <p class="detail-label">Task ID</p>
+                <div class="flex items-center gap-2">
+                  <p class="flex-1 bg-gray-800 rounded-lg px-3 py-2 mono text-xs text-gray-300 break-all">{{ selectedTask.id }}</p>
+                  <button @click="copyText(selectedTask.id)" class="copy-btn" title="Copy ID">⎘</button>
+                </div>
+              </div>
+              <div class="grid grid-cols-2 gap-4">
+                <div>
+                  <p class="detail-label">Queue / Schedule</p>
+                  <div class="flex items-center gap-1.5 flex-wrap">
+                    <span class="bg-gray-800 text-gray-300 mono text-[10px] px-2 py-0.5 rounded-md border border-gray-700">{{ selectedTask.queue }}</span>
+                    <span v-if="selectedTask.queue_group" class="bg-indigo-900/40 text-indigo-400 mono text-[10px] px-2 py-0.5 rounded-md border border-indigo-900/50">FIFO:{{ selectedTask.queue_group }}</span>
+                    <span v-if="selectedTask.type === 'webhook:cron'" class="bg-emerald-900/40 text-emerald-400 mono text-[10px] px-2 py-0.5 rounded-md border border-emerald-900/50">CRON: {{ selectedTask.cron }}</span>
+                  </div>
+                  <p v-if="selectedTask.type === 'webhook:cron'" class="text-[10px] text-purple-400 mt-1">{{ translateCron(selectedTask.cron) }}</p>
+                </div>
+                <div v-if="selectedTask.type !== 'webhook:cron'">
+                  <p class="detail-label">Retries</p>
+                  <span class="text-xs text-gray-300">{{ selectedTask.retries || 3 }}x max</span>
+                </div>
+                <div v-else>
+                  <p class="detail-label">Timezone</p>
+                  <span class="text-xs text-gray-300 font-sans">{{ selectedTask.timezone }}</span>
+                </div>
+              </div>
+
+              <div v-if="selectedTask.delay || selectedTask.dedup_id" class="grid grid-cols-2 gap-4">
+                <div v-if="selectedTask.delay">
+                  <p class="detail-label">Initial Delay</p>
+                  <span class="text-xs text-gray-300 font-mono">{{ selectedTask.delay }}</span>
+                  <p class="text-[10px] text-indigo-400 mt-0.5">{{ translateDelay(selectedTask.delay) }}</p>
+                </div>
+                <div v-if="selectedTask.dedup_id">
+                  <p class="detail-label">Deduplication ID</p>
+                  <p class="text-[10px] text-gray-400 break-all font-mono">{{ selectedTask.dedup_id }}</p>
+                </div>
+              </div>
+
+              <div>
+                <p class="detail-label">Destination</p>
+                <div class="flex items-center gap-2">
+                  <p class="flex-1 text-xs text-indigo-300 break-all font-mono leading-relaxed">{{ selectedTask.destination }}</p>
+                  <button @click="copyText(selectedTask.destination)" class="copy-btn" title="Copy URL">⎘</button>
+                </div>
+              </div>
+              <div v-if="selectedTask.failure_callback">
+                <p class="detail-label">Failure Callback</p>
+                <p class="text-xs text-amber-400 break-all font-mono leading-relaxed">{{ selectedTask.failure_callback }}</p>
+              </div>
+              <div>
+                <div class="flex items-center justify-between mb-1.5">
+                  <p class="detail-label" style="margin-bottom:0">Payload Body</p>
+                  <button @click="copyText(fmtJSON(selectedTask.body))" class="copy-btn">⎘ Copy</button>
+                </div>
+                <div class="bg-gray-800 rounded-lg p-3 overflow-auto max-h-52" v-html="syntaxHL(selectedTask.body)"></div>
+              </div>
+
+              <div class="pt-4 flex gap-3">
+                <button @click="isEditing = true" class="flex-1 py-2.5 bg-gray-800 hover:bg-gray-700 text-white text-xs font-semibold rounded-lg border border-gray-700">Edit Task</button>
+                <button @click="forceRunInDrawer" :disabled="drawerFiring" class="flex-[1.5] py-2.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-semibold rounded-lg transition-all shadow-lg shadow-indigo-900/20">
+                  <span v-if="drawerFiring">Firing...</span>
+                  <span v-else>▶ Fire Now</span>
+                </button>
+                <button @click="deleteTask(selectedTask.id, selectedTask.queue)" class="flex-1 py-2.5 bg-red-950/30 hover:bg-red-900/40 text-red-500 text-xs font-semibold rounded-lg border border-red-900/30">Delete</button>
+              </div>
+            </div>
+
+            <!-- Edit Mode -->
+            <div v-else class="p-5 space-y-5">
+              <div>
+                <label class="detail-label">Destination URL</label>
+                <input v-model="editForm.destination" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs focus:ring-1 focus:ring-indigo-500 outline-none text-white font-mono">
+              </div>
+              <div>
+                <label class="detail-label">Failure Callback URL</label>
+                <input v-model="editForm.failure_callback" placeholder="Optional" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs focus:ring-1 focus:ring-indigo-500 outline-none text-white font-mono">
+              </div>
+              <div v-if="selectedTask.type === 'webhook:cron'" class="grid grid-cols-2 gap-4">
+                <div>
+                  <label class="detail-label">Cron Expression</label>
+                  <input v-model="editForm.cron" @blur="editForm.cron = autoFormatCron(editForm.cron)" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs focus:ring-1 focus:ring-indigo-500 outline-none text-white font-mono">
+                  <p v-if="editForm.cron" class="text-[10px] text-purple-400 mt-1 pl-1 truncate">{{ editCronPreview }}</p>
+                </div>
+                <div>
+                  <label class="detail-label">Timezone</label>
+                  <input v-model="editForm.timezone" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs focus:ring-1 focus:ring-indigo-500 outline-none text-white font-sans">
+                </div>
+              </div>
+              <div v-if="selectedTask.type !== 'webhook:cron'" class="grid grid-cols-2 gap-4">
+                <div>
+                  <label class="detail-label">Delay (10s / 5m)</label>
+                  <input v-model="editForm.delay" placeholder="0 = immediate" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs focus:ring-1 focus:ring-indigo-500 outline-none text-white font-mono">
+                  <p v-if="editForm.delay" class="text-[10px] text-indigo-400 mt-1 pl-1 truncate">{{ editDelayPreview }}</p>
+                </div>
+                <div>
+                  <label class="detail-label">Max Retries</label>
+                  <input type="number" v-model="editForm.retries" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs focus:ring-1 focus:ring-indigo-500 outline-none text-white font-mono">
+                </div>
+              </div>
+              <div v-if="selectedTask.type !== 'webhook:cron'">
+                  <label class="detail-label">FIFO Queue Group</label>
+                  <input v-model="editForm.queue_group" placeholder="Optional" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs focus:ring-1 focus:ring-indigo-500 outline-none text-white font-mono">
+              </div>
+
+              <div>
+                <div class="flex justify-between items-center mb-1">
+                  <label class="detail-label" style="margin-bottom:0">Payload (JSON)</label>
+                  <span class="text-[9px] text-gray-500 uppercase">Pretty JSON auto-detected</span>
+                </div>
+                <textarea v-model="editForm.body" rows="10" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs font-mono focus:ring-1 focus:ring-indigo-500 outline-none text-white resize-none"></textarea>
+              </div>
+              <div class="pt-2 flex gap-3">
+                <button @click="isEditing = false" class="flex-1 py-2.5 bg-gray-800 hover:bg-gray-700 text-white text-xs font-semibold rounded-lg">Cancel</button>
+                <button @click="saveEdit" :disabled="formLoading" class="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-lg">
+                  {{ formLoading ? 'Saving...' : 'Save Changes' }}
+                </button>
+              </div>
+            </div>
+
+            <!-- Fire Response (shown inline in drawer) -->
+            <transition name="fade">
+              <div v-if="drawerResponse" class="border-t border-gray-800 mx-0">
+                <div class="px-5 py-3 flex items-center gap-3">
+                  <span :class="['text-base font-bold mono', drawerResponse.http_status>=200&&drawerResponse.http_status<300 ? 'text-emerald-400' : 'text-red-400']">
+                    {{ drawerResponse.http_status || 'ERR' }}
+                  </span>
+                  <span class="mono text-xs text-gray-500">{{ drawerResponse.latency_ms }}ms</span>
+                  <span class="text-xs text-gray-400 flex-1 truncate">{{ selectedTask.destination }}</span>
+                  <button @click="drawerResponse=null" class="text-gray-600 hover:text-gray-400 text-sm">✕</button>
+                </div>
+                <div v-if="drawerResponse.error" class="px-5 pb-4 text-xs text-red-400">{{ drawerResponse.error }}</div>
+                <div v-else class="px-5 pb-5">
+                  <div class="flex items-center justify-between mb-1.5">
+                    <div class="flex items-center gap-3">
+                      <p class="detail-label" style="margin-bottom:0">Response Body</p>
+                      <button @click="showResponseMetadata = !showResponseMetadata" 
+                        class="text-[10px] px-2 py-0.5 rounded border border-gray-700 hover:bg-gray-800 text-gray-400 transition-colors">
+                        {{ showResponseMetadata ? 'Hide Metadata' : 'Show Metadata' }}
+                      </button>
+                    </div>
+                    <button @click="copyText(fmtJSON(drawerResponse.body))" class="copy-btn">⎘ Copy</button>
+                  </div>
+                  <div class="bg-gray-800 rounded-lg p-3 overflow-auto max-h-64" v-html="syntaxHL(cleanResponse(drawerResponse.body))"></div>
+                </div>
+              </div>
+            </transition>
+          </div>
+        </div>
+      </div>
+    </transition>
+
+    <!-- Toast -->
+    <transition name="fade">
+      <div v-if="toast" class="fixed bottom-5 right-5 z-50">
+        <div :class="['px-4 py-3 rounded-lg text-sm border shadow-xl fade-in',
+          toast.type==='error' ? 'bg-red-950 border-red-900 text-red-300' : 'bg-gray-800 border-gray-700 text-gray-200']">
+          {{ toast.msg }}
+        </div>
+      </div>
+    </transition>
+
+    <!-- ─── Custom Confirm Popover ─── -->
+    <div v-if="confirmPopover.show" class="confirm-overlay" @click.self="confirmPopover.onCancel()">
+      <div class="confirm-box">
+        <div class="flex items-center gap-3 mb-3">
+          <span class="text-2xl">{{ confirmPopover.icon || '⚠️' }}</span>
+          <div>
+            <p class="text-sm font-semibold text-white">{{ confirmPopover.title }}</p>
+            <p class="text-xs text-gray-400 mt-0.5">{{ confirmPopover.message }}</p>
+          </div>
+        </div>
+        <div class="flex gap-2 justify-end mt-4">
+          <button @click="confirmPopover.onCancel()"
+            class="text-sm px-4 py-2 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 border border-gray-700 transition-colors">
+            Cancel
+          </button>
+          <button @click="confirmPopover.onConfirm()"
+            :class="['text-sm px-4 py-2 rounded-lg font-semibold border transition-colors',
+              confirmPopover.danger
+                ? 'bg-red-600 hover:bg-red-500 text-white border-red-600'
+                : 'bg-indigo-600 hover:bg-indigo-500 text-white border-indigo-600']">
+            {{ confirmPopover.confirmText || 'Confirm' }}
+          </button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+const { createApp, ref, computed, onMounted, onUnmounted, nextTick } = Vue
+createApp({
+  setup() {
+    // ─── Auth ───
+    const authed = ref(false)
+    const apiKeyInput = ref('')
+    const loginError = ref('')
+    const apiKey = ref(localStorage.getItem('JEDA_API_KEY') || '')
+    if (apiKey.value) authed.value = true
+
+    const H = () => ({ Authorization: `Bearer ${apiKey.value}`, 'Content-Type': 'application/json' })
+
+    async function login() {
+      const res = await fetch('/v1/tasks', { headers: { Authorization: `Bearer ${apiKeyInput.value}` } })
+      if (res.ok) {
+        apiKey.value = apiKeyInput.value
+        localStorage.setItem('JEDA_API_KEY', apiKey.value)
+        authed.value = true; loginError.value = ''
+        loadData(); startSSE()
+      } else { loginError.value = 'Invalid API key.' }
+    }
+    function logout() {
+      localStorage.removeItem('JEDA_API_KEY')
+      authed.value = false; apiKey.value = ''
+      if (sseLog)  sseLog.close()
+      if (sseTask) sseTask.close()
+    }
+
+    // ─── Custom Confirm Popover ───
+    const confirmPopover = ref({ show: false, title: '', message: '', icon: '⚠️', danger: true, confirmText: 'Confirm', onConfirm: () => {}, onCancel: () => {} })
+    function showConfirm({ title, message, icon = '🗑️', danger = true, confirmText = 'Confirm' }) {
+      return new Promise(resolve => {
+        confirmPopover.value = {
+          show: true, title, message, icon, danger, confirmText,
+          onConfirm: () => { confirmPopover.value.show = false; resolve(true) },
+          onCancel:  () => { confirmPopover.value.show = false; resolve(false) }
+        }
+      })
+    }
+
+    // ─── Nav & Env ───
+    const tab = ref('tasks')
+    const env = ref(localStorage.getItem('JEDA_ENV') || 'production')
+    const navItems = [
+      { id: 'tasks', icon: '≡', label: 'Tasks & Schedules' },
+      { id: 'test',  icon: '⚡', label: 'Fire Test' },
+      { id: 'logs',  icon: '≣', label: 'Live Logs' },
+    ]
+    const statCards = [
+      { label: 'Pending',  key: 'pending', color: 'text-indigo-400' },
+      { label: 'Active',   key: 'active',  color: 'text-yellow-400' },
+      { label: 'Done',     key: 'success', color: 'text-emerald-400' },
+      { label: 'DLQ',      key: 'failed',  color: 'text-red-400' },
+    ]
+    const currentNavLabel = computed(() => navItems.find(n => n.id===tab.value)?.label || '')
+    function setEnv(e) { env.value = e; localStorage.setItem('JEDA_ENV', e) }
+
+    // ─── Data ───
+    const stats = ref({ pending:0, active:0, failed:0, success:0 })
+    const tasks = ref([])
+    const search = ref('')
+    const taskFilter = ref('all')
+
+    const filteredTasks = computed(() => {
+      const q = search.value.toLowerCase()
+      return tasks.value.filter(t => {
+        const envMatch  = (t.env || 'production') === env.value
+        const typeMatch = taskFilter.value === 'all' || t.type === taskFilter.value
+        const srchMatch = !q || t.id.toLowerCase().includes(q) || (t.destination||'').toLowerCase().includes(q)
+        return envMatch && typeMatch && srchMatch
+      })
+    })
+
+    // Stats filtered by current environment (for stat cards + topbar)
+    const envStats = computed(() => {
+      const envTasks = tasks.value.filter(t => (t.env || 'production') === env.value)
+      return {
+        pending: envTasks.length, // pending + scheduled combined
+        active:  stats.value.active,   // asynq doesn't expose env per active task
+        success: stats.value.success,
+        failed:  stats.value.failed,
+      }
+    })
+
+    // loadData is only used for the initial load and manual Refresh button
+    async function loadData() {
+      try {
+        const res = await fetch('/v1/tasks', { headers: H() })
+        if (!res.ok) return
+        const d = await res.json()
+        tasks.value = d.tasks || []
+        stats.value = d.stats || { pending:0, active:0, failed:0, success:0 }
+      } catch {}
+    }
+
+    // ─── SSE: Live Logs ───
+    const logs = ref([])
+    const logPanel = ref(null)
+    const sseLogsConnected  = ref(false)
+    const sseTasksConnected = ref(false)
+    const sseConnected = computed(() => sseLogsConnected.value && sseTasksConnected.value)
+    let sseLog = null
+    let sseTask = null
+
+    function startSSE() {
+      const key = encodeURIComponent(apiKey.value)
+
+      // ── Logs stream ──
+      if (sseLog) sseLog.close()
+      sseLog = new EventSource(`/v1/logs/stream?key=${key}`)
+      sseLog.onopen  = () => { sseLogsConnected.value = true }
+      sseLog.onerror = () => { sseLogsConnected.value = false }
+      sseLog.onmessage = (e) => {
+        try {
+          const log = JSON.parse(e.data)
+          log._new = true
+          logs.value.unshift(log)
+          if (logs.value.length > 300) logs.value.splice(300)
+        } catch {}
+      }
+
+      // ── Tasks stream ──
+      if (sseTask) sseTask.close()
+      sseTask = new EventSource(`/v1/tasks/stream?key=${key}`)
+      sseTask.onopen  = () => { sseTasksConnected.value = true }
+      sseTask.onerror = () => { sseTasksConnected.value = false }
+      sseTask.onmessage = (e) => {
+        try {
+          const d = JSON.parse(e.data)
+          if (d.tasks  !== undefined) tasks.value  = d.tasks  || []
+          if (d.stats  !== undefined) stats.value  = d.stats  || { pending:0, active:0, failed:0, success:0 }
+        } catch {}
+      }
+    }
+
+    // ─── Drawer state ───
+    const selectedTask    = ref(null)
+    const drawerFiring    = ref(false)
+    const drawerResponse  = ref(null)
+    const showResponseMetadata = ref(false)
+    const isEditing       = ref(false)
+    const editForm        = ref({ destination:'', failure_callback:'', body:'', delay:'', retries:3, cron:'', timezone:'', queue_group:'', dedup_id:'', env:'' })
+
+    function openDetail(t) { 
+      selectedTask.value = t; 
+      drawerResponse.value = null; 
+      showResponseMetadata.value = false;
+      isEditing.value = false;
+      editForm.value = {
+        destination: t.destination,
+        failure_callback: t.failure_callback || '',
+        body: fmtJSON(t.body),
+        delay: t.delay || '',
+        retries: t.retries ?? 3,
+        cron: t.cron || '',
+        timezone: t.timezone || 'Asia/Jakarta',
+        queue_group: t.queue_group || '',
+        dedup_id: t.dedup_id || '',
+        env: t.env || 'production'
+      }
+    }
+    function closeDrawer()  { 
+      selectedTask.value = null; 
+      drawerFiring.value = false; 
+      drawerResponse.value = null; 
+      isEditing.value = false;
+    }
+
+    function translateCron(expr) {
+      if (!expr) return ''
+      // cronstrue loads itself as window.cronstrue in browser (CommonJS UMD)
+      const lib = (typeof cronstrue !== 'undefined') ? cronstrue : (window.cronstrue || null)
+      if (!lib) return ''
+      try { return lib.toString(expr.trim(), { use24HourTimeFormat: true }) }
+      catch { return 'Invalid cron expression' }
+    }
+    
+    // Auto-format cron: normalize whitespace so "08***" → "0 8 * * *"
+    function autoFormatCron(raw) {
+      if (!raw) return raw
+      // If user typed contiguous non-space chars, try to split into 5 parts
+      const trimmed = raw.replace(/\s+/g, ' ').trim()
+      return trimmed
+    }
+
+    function translateDelay(d) {
+      if (!d || d === '0') return 'Immediate execution'
+      if (/\d{4}-\d{2}-\d{2}/.test(d)) {
+        let clean = d.replace(' ', 'T')
+        if (clean.length === 16) clean += ':00'
+        const dt = new Date(clean)
+        return isNaN(dt.getTime()) ? 'Invalid date' : `At ${dt.toLocaleString()}`
+      }
+      const match = d.match(/^(\d+)([smhd])$/)
+      if (!match) return 'Invalid delay format'
+      const num = parseInt(match[1]), unit = match[2]
+      let mul = 1000; if (unit==='m') mul=60000; else if (unit==='h') mul=3600000; else if (unit==='d') mul=86400000
+      const dt = new Date(Date.now() + num * mul)
+      return `Around ${dt.toLocaleString()}`
+    }
+
+    const editCronPreview = computed(() => translateCron(editForm.value.cron))
+    const editDelayPreview = computed(() => translateDelay(editForm.value.delay))
+
+    async function saveEdit() {
+      if (!selectedTask.value) return
+      formLoading.value = true
+      try {
+        const body = JSON.parse(editForm.value.body)
+        const task = selectedTask.value
+        const payload = {
+          destination: editForm.value.destination,
+          failure_callback: editForm.value.failure_callback,
+          body: body
+        }
+        if (task.type === 'webhook:cron') {
+          payload.cron = editForm.value.cron
+          payload.timezone = editForm.value.timezone
+        } else {
+          payload.delay = editForm.value.delay
+          payload.retries = +editForm.value.retries
+          payload.queue_group = editForm.value.queue_group
+          // Note: DeduplicationID update is technically blocked by Redis hashing logic in our handler, 
+          // because it dictates task ID. We'll send it anyway in case it works.
+          payload.dedup_id = editForm.value.dedup_id
+        }
+
+        const res = await fetch(`/v1/tasks/${task.id}/update?queue=${task.queue}`, {
+          method: 'POST',
+          headers: H(),
+          body: JSON.stringify(payload)
+        })
+        if (res.ok) {
+          showToast('Task updated')
+          isEditing.value = false
+          loadData()
+          // Update selected task in situ to see changes immediately
+          selectedTask.value.destination = editForm.value.destination
+          selectedTask.value.failure_callback = editForm.value.failure_callback
+          selectedTask.value.body = body
+          selectedTask.value.delay = editForm.value.delay
+          selectedTask.value.retries = +editForm.value.retries
+          selectedTask.value.cron = editForm.value.cron
+          selectedTask.value.timezone = editForm.value.timezone
+          selectedTask.value.queue_group = editForm.value.queue_group
+        } else {
+          const err = await res.json()
+          showToast(err.error || 'Update failed', 'error')
+        }
+      } catch(e) {
+        showToast('Invalid JSON body', 'error')
+      } finally {
+        formLoading.value = false
+      }
+    }
+
+    async function deleteTask(id, queue) {
+      const ok = await showConfirm({
+        title: 'Delete Task',
+        message: 'Remove this task from the queue? This cannot be undone.',
+        icon: '🗑️', danger: true, confirmText: 'Delete'
+      })
+      if (!ok) return
+      const res = await fetch(`/v1/tasks/${id}?queue=${queue||'default'}`, { method:'DELETE', headers:H() })
+      if (res.ok) {
+        showToast('Task deleted')
+        tasks.value = tasks.value.filter(t => t.id !== id)
+        if (selectedTask.value?.id === id) closeDrawer()
+      }
+      else showToast('Delete failed', 'error')
+    }
+
+    // forceRunInDrawer: fires webhook and shows response inside the same drawer
+    async function forceRunInDrawer() {
+      if (!selectedTask.value || drawerFiring.value) return
+      drawerFiring.value = true
+      drawerResponse.value = null
+      const task = selectedTask.value
+      try {
+        const res = await fetch(`/v1/tasks/${task.id}/force?queue=${task.queue||'default'}`, { method:'POST', headers:H() })
+        const data = await res.json()
+        if (!res.ok) {
+          drawerResponse.value = { error: data?.error || res.statusText, http_status: 0, latency_ms: 0 }
+        } else if (data.status === 'fired') {
+          drawerResponse.value = data
+          // Task was fired & removed from queue — update local state
+          if (task.queue !== 'scheduler') {
+            tasks.value = tasks.value.filter(t => t.id !== task.id)
+            showToast(`✓ Fired! HTTP ${data.http_status} in ${data.latency_ms}ms`)
+          }
+        } else {
+          showToast('Moving to pending...')
+          setTimeout(loadData, 1000)
+        }
+      } catch(e) {
+        drawerResponse.value = { error: e.message, http_status: 0, latency_ms: 0 }
+      } finally {
+        drawerFiring.value = false
+      }
+    }
+
+    // forceRun from table row (no drawer open, fires and shows toast only)
+    async function forceRun(task) {
+      showToast('Firing...')
+      const res = await fetch(`/v1/tasks/${task.id}/force?queue=${task.queue||'default'}`, { method:'POST', headers:H() })
+      const data = res.ok ? await res.json() : null
+      if (!res.ok || !data) { showToast('Force run failed', 'error'); return }
+      if (data.status === 'fired') {
+        showToast(`✓ HTTP ${data.http_status} in ${data.latency_ms}ms`)
+        // Task was deleted from queue after firing — remove from local list
+        if (task.queue !== 'scheduler') {
+          tasks.value = tasks.value.filter(t => t.id !== task.id)
+        }
+      } else showToast('Task moved to pending queue')
+    }
+
+    async function confirmPause() {
+      const ok = await showConfirm({
+        title: 'Pause All Queues',
+        message: 'Stop all outgoing webhooks. Tasks will queue up and NOT fire until resumed.',
+        icon: '⏸️', danger: true, confirmText: 'Pause All'
+      })
+      if (!ok) return
+      await fetch('/v1/queue/pause', { method:'POST', headers:H() })
+      showToast('All queues paused')
+    }
+    async function resumeQueue() {
+      await fetch('/v1/queue/resume', { method:'POST', headers:H() })
+      showToast('Queues resumed')
+    }
+
+    // ─── Add Form ───
+    const showForm = ref(false)
+    const addMode  = ref('webhook')
+    const formLoading = ref(false)
+    const formResult  = ref(null)
+    const form = ref({
+      destination:'', delay:'', retries:3, dedupId:'', queueGroup:'',
+      failureCallback:'', cron:'', timezone:'Asia/Jakarta',
+      environment:'production', body:'{\n  "key": "value"\n}'
+    })
+
+    const addCronPreview = computed(() => translateCron(form.value.cron))
+    const addDelayPreview = computed(() => translateDelay(form.value.delay))
+
+    async function submitForm() {
+      formLoading.value = true; formResult.value = null
+      try {
+        let body = null
+        try { body = JSON.parse(form.value.body) } catch {}
+        
+        const payload = {
+          destination: form.value.destination,
+          body: body,
+          env: env.value,
+          failure_callback: form.value.failureCallback,
+          dedup_id: form.value.dedupId,
+          queue_group: form.value.queueGroup,
+          timezone: form.value.timezone
+        }
+
+        if (addMode.value === 'webhook') {
+          payload.delay = form.value.delay
+          payload.retries = +form.value.retries
+        } else {
+          payload.cron = form.value.cron
+        }
+
+        const res = await fetch('/v1/tasks', {
+          method: 'POST',
+          headers: H(),
+          body: JSON.stringify(payload)
+        })
+        formResult.value = await res.json()
+        if (res.ok) showToast('Task created successfully')
+        loadData()
+      } catch(e) {
+        formResult.value = { error: e.message }
+        showToast('Submission failed', 'error')
+      } finally {
+        formLoading.value = false
+      }
+    }
+
+    // ─── Fire Test ───
+    const testForm   = ref({ destination:'https://httpbin.org/post', body:'{\n  "hello": "jeda"\n}' })
+    const testing    = ref(false)
+    const testResult = ref(null)
+
+    async function fireTest() {
+      testing.value = true; testResult.value = null
+      try {
+        let body = null
+        try { body = JSON.parse(testForm.value.body) } catch {}
+        const res = await fetch('/v1/test-webhook', { method:'POST', headers:H(), body:JSON.stringify({ destination:testForm.value.destination, body }) })
+        testResult.value = await res.json()
+      } catch(e) {
+        testResult.value = { error:e.message, latency_ms:0 }
+      } finally { testing.value = false }
+    }
+
+    // ─── Helpers ───
+    const toast = ref(null)
+    let toastT
+    function showToast(msg, type='success') {
+      clearTimeout(toastT)
+      toast.value = { msg, type }
+      toastT = setTimeout(() => toast.value = null, 3000)
+    }
+    // deepParse: pretty-print JSON, recursively expanding embedded JSON strings.
+    function deepParse(val) {
+      if (typeof val === 'string') {
+        const trimmed = val.trim()
+        if ((trimmed.startsWith('{') || trimmed.startsWith('[')) ) {
+          try { return deepParse(JSON.parse(trimmed)) } catch {}
+        }
+        return val
+      }
+      if (Array.isArray(val)) return val.map(deepParse)
+      if (val !== null && typeof val === 'object') {
+        const out = {}
+        for (const [k, v] of Object.entries(val)) {
+          // Optimization: if we have both 'data' string and 'json/body' object, 
+          // might be redundant mirror response.
+          out[k] = deepParse(v)
+        }
+        return out
+      }
+      return val
+    }
+
+    // cleanResponse: specifically filters out boilerplate from mirror services like httpbin
+    function cleanResponse(val) {
+      if (!val || typeof val !== 'object' || showResponseMetadata.value) return val
+      // If it looks like httpbin or mirror response, try to pick the best "data" part
+      if (val.json && Object.keys(val.json).length > 0) return val.json
+      if (val.data && (typeof val.data === 'object')) return val.data
+      if (val.body && (typeof val.body === 'object')) return val.body
+      
+      // Filter out noisy keys if it's mirror-like
+      if (val.headers && val.origin && val.url) {
+        const { headers, origin, url, args, ...rest } = val
+        return Object.keys(rest).length > 0 ? rest : val
+      }
+      return val
+    }
+    function fmtJSON(val) {
+      if (val == null) return 'null'
+      try {
+        const parsed = typeof val === 'string' ? JSON.parse(val) : val
+        return JSON.stringify(deepParse(parsed), null, 2)
+      } catch {
+        return String(val)
+      }
+    }
+
+    // toggleLog: expand/collapse a log row in-place
+    function toggleLog(log) {
+      log._expanded = !log._expanded
+    }
+    // logFields: return all log fields except Vue-internal meta keys
+    function logFields(log) {
+      const skip = new Set(['_new', '_expanded'])
+      const out = {}
+      for (const [k, v] of Object.entries(log)) {
+        if (!skip.has(k)) out[k] = v
+      }
+      return out
+    }
+    // syntaxHL: returns HTML string with colored JSON tokens
+    function syntaxHL(val) {
+      const str = fmtJSON(val)
+      const esc = str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+      return '<span class="hl-wrap">' + esc
+        .replace(/("[^"]*")\s*:/g, '<span class="hl-key">$1</span>:')
+        .replace(/:\s*("[^"]*")/g, ': <span class="hl-str">$1</span>')
+        .replace(/:\s*(-?\d+\.?\d*)/g, ': <span class="hl-num">$1</span>')
+        .replace(/:\s*(true|false)/g, ': <span class="hl-bool">$1</span>')
+        .replace(/:\s*(null)/g, ': <span class="hl-null">$1</span>')
+        + '</span>'
+    }
+    function copyText(text) {
+      navigator.clipboard.writeText(text).then(() => showToast('Copied!'))
+    }
+    function fmtTime(iso) { return iso ? iso.substring(11,19) : '' }
+    function logColor(l) {
+      if (!l) return 'text-gray-500'
+      if (l.includes('ERROR')) return 'text-red-400'
+      if (l.includes('WARN'))  return 'text-yellow-400'
+      return 'text-indigo-400'
+    }
+
+    // ─── Lifecycle ───
+    onMounted(() => {
+      if (authed.value) { loadData(); startSSE() }
+    })
+    onUnmounted(() => {
+      if (sseLog)  sseLog.close()
+      if (sseTask) sseTask.close()
+    })
+
+    return {
+      authed, apiKeyInput, loginError, login, logout,
+      tab, env, navItems, statCards, currentNavLabel, setEnv,
+      stats, envStats, tasks, search, taskFilter, filteredTasks, loadData,
+      logs, logPanel, sseConnected,
+      selectedTask, drawerFiring, drawerResponse, showResponseMetadata, isEditing, editForm, openDetail, closeDrawer, saveEdit, deleteTask, forceRun, forceRunInDrawer,
+      confirmPause, resumeQueue,
+      showForm, addMode, form, formLoading, formResult, submitForm,
+      testForm, testing, testResult, fireTest,
+      toast, fmtJSON, syntaxHL, cleanResponse, copyText, fmtTime, logColor, toggleLog, logFields,
+      addCronPreview, addDelayPreview, editCronPreview, editDelayPreview,
+      translateCron, translateDelay, autoFormatCron,
+      confirmPopover
+    }
+  }
+}).mount('#app')
+</script>
+</body>
+</html>
