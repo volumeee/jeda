@@ -50,32 +50,14 @@ func (h *ManageHandler) RDB() *redis.Client { return h.rdb }
 // Background feed goroutines
 // ─────────────────────────────────────────────────
 
-// feedLogs polls Redis for new log entries every 500ms and broadcasts them.
 func (h *ManageHandler) feedLogs() {
-	var lastLen int64
 	ctx := context.Background()
-	for {
-		time.Sleep(500 * time.Millisecond)
-		n, err := h.rdb.LLen(ctx, "jeda:logs").Result()
-		if err != nil {
-			continue
-		}
-		if n == lastLen {
-			continue
-		}
-		newCount := n - lastLen
-		if newCount < 0 { // list was trimmed/reset
-			lastLen = 0
-			newCount = n
-		}
-		items, err := h.rdb.LRange(ctx, "jeda:logs", 0, newCount-1).Result()
-		if err != nil {
-			continue
-		}
-		lastLen = n
-		for _, item := range items {
-			h.logs.Send(item)
-		}
+	pubsub := h.rdb.Subscribe(ctx, "jeda:logs:pubsub")
+	defer pubsub.Close()
+	
+	ch := pubsub.Channel()
+	for msg := range ch {
+		h.logs.Send(msg.Payload)
 	}
 }
 

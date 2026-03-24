@@ -46,6 +46,7 @@ func (h *RedisHandler) Handle(ctx context.Context, r slog.Record) error {
 	b, _ := json.Marshal(msg)
 	h.client.LPush(ctx, "jeda:logs", string(b))
 	h.client.LTrim(ctx, "jeda:logs", 0, 199) // Keep only the latest 200 logs
+	h.client.Publish(ctx, "jeda:logs:pubsub", string(b)) // Broadcast in real-time
 
 	return nil
 }
